@@ -1,0 +1,42 @@
+// Dev container — every tool the lab needs, defined as code.
+// Works in GitHub Codespaces (browser, nothing installed locally) or
+// VS Code + Docker ("Dev Containers: Reopen in Container").
+{
+  "name": "tflab-azure",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu24.04",
+
+  // Smallest Codespaces machine (2 cores) — stretches the free monthly quota furthest.
+  "hostRequirements": { "cpus": 2 },
+
+  "features": {
+    "ghcr.io/devcontainers/features/azure-cli:1": { "version": "latest" },
+    "ghcr.io/devcontainers/features/github-cli:1": { "version": "latest" },
+    "ghcr.io/devcontainers/features/terraform:1": { "version": "latest", "tflint": "latest" },
+    "ghcr.io/devcontainers/features/dotnet:2": { "version": "10.0" },
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+
+  // Runs once after the container is built: sqlcmd, app dependencies, version check.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "forwardPorts": [5173, 5000],
+  "portsAttributes": {
+    "5173": { "label": "React (Vite dev server)" },
+    "5000": { "label": ".NET API" }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "hashicorp.terraform",
+        "ms-dotnettools.csdevkit",
+        "ms-azuretools.vscode-azureresourcegroups",
+        "github.vscode-github-actions",
+        "ms-mssql.mssql"
+      ],
+      "settings": {
+        "[terraform]": { "editor.formatOnSave": true }
+      }
+    }
+  }
+}

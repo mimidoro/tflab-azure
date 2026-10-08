@@ -1,0 +1,42 @@
+# TEARDOWN 1 of 2 — removes everything Terraform created (lab RG itself and
+# state are kept; bootstrap/99-teardown.sh removes those).
+name: destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm'
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: tflab-deploy
+  cancel-in-progress: false
+
+env:
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: "true"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  destroy:
+    if: inputs.confirm == 'destroy'
+    runs-on: ubuntu-24.04
+    environment: lab
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - run: terraform init -backend-config=backend.hcl
+      - run: terraform destroy -auto-approve

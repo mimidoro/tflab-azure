@@ -1,0 +1,224 @@
+# STEPS 3–6 — Pipeline. Order: plan → apply → db → api → web → smoke
+#   Pull request : plan only (review the diff before merge)
+#   Push to main : plan → apply → db → api → web → smoke
+# Auth: GitHub OIDC → Entra federated credential. No secrets stored in GitHub.
+# Hardening tip: pin each action to a full commit SHA once the lab works.
+name: deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC token for Azure
+  contents: read
+
+concurrency:
+  group: tflab-deploy # never run two applies against the same state
+  cancel-in-progress: false
+
+env:
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: "true"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  # ---------------------------------------------------------------- STEP 3a
+  plan:
+    # Skip cleanly until bootstrap has set the repo variables.
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend-config=backend.hcl
+      - run: terraform validate
+      - run: terraform plan -out=tfplan
+      - name: Save plan for apply (main only)
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tfplan
+          path: infra/tfplan
+          retention-days: 1
+
+  # ---------------------------------------------------------------- STEP 3b
+  apply:
+    if: github.event_name != 'pull_request'
+    needs: plan
+    runs-on: ubuntu-24.04
+    environment: lab
+    defaults:
+      run:
+        working-directory: infra
+    outputs:
+      api_name: ${{ steps.out.outputs.api_name }}
+      api_hostname: ${{ steps.out.outputs.api_hostname }}
+      api_principal_id: ${{ steps.out.outputs.api_principal_id }}
+      web_name: ${{ steps.out.outputs.web_name }}
+      web_hostname: ${{ steps.out.outputs.web_hostname }}
+      sql_server_name: ${{ steps.out.outputs.sql_server_name }}
+      sql_fqdn: ${{ steps.out.outputs.sql_fqdn }}
+      db_name: ${{ steps.out.outputs.db_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - run: terraform init -backend-config=backend.hcl
+      - uses: actions/download-artifact@v8
+        with:
+          name: tfplan
+          path: infra
+      - run: terraform apply tfplan # applies exactly what was planned
+      - id: out
+        name: Export outputs
+        run: |
+          for k in api_name api_hostname api_principal_id web_name web_hostname sql_server_name sql_fqdn db_name; do
+            echo "$k=$(terraform output -raw $k)" >> "$GITHUB_OUTPUT"
+          done
+
+  # ---------------------------------------------------------------- STEP 4
+  db:
+    needs: apply
+    runs-on: ubuntu-24.04
+    environment: lab
+    env:
+      SQL_FQDN: ${{ needs.apply.outputs.sql_fqdn }}
+      SQL_SERVER: ${{ needs.apply.outputs.sql_server_name }}
+      DB_NAME: ${{ needs.apply.outputs.db_name }}
+      RULE: gh-runner-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install go-sqlcmd
+        run: |
+          mkdir -p "$RUNNER_TEMP/sqlcmd"
+          if curl -fsSL https://github.com/microsoft/go-sqlcmd/releases/latest/download/sqlcmd-linux-amd64.tar.bz2 \
+               | tar -xj -C "$RUNNER_TEMP/sqlcmd"; then
+            sudo install "$(find "$RUNNER_TEMP/sqlcmd" -type f -name sqlcmd | head -1)" /usr/local/bin/sqlcmd
+          else
+            sudo apt-get update && sudo apt-get install -y sqlcmd   # fallback: Microsoft apt repo
+          fi
+          sqlcmd --version
+
+      # Login immediately before SQL work: the federated assertion is short-lived.
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Open SQL firewall for this runner only
+        run: |
+          IP=$(curl -fsS https://api.ipify.org)
+          az sql server firewall-rule create -g "${{ vars.LAB_RG }}" -s "$SQL_SERVER" -n "$RULE" \
+            --start-ip-address "$IP" --end-ip-address "$IP" -o none
+
+      - name: Apply schema + grant API identity
+        env:
+          AZURE_TOKEN_CREDENTIALS: AzureCliCredential # use the az login above
+          # sqlcmd reads environment variables as $(Var) scripting variables
+          ApiName: ${{ needs.apply.outputs.api_name }}
+          ApiPrincipalId: ${{ needs.apply.outputs.api_principal_id }}
+        run: |
+          run_sql() {
+            for i in 1 2 3 4 5; do  # free DB may be resuming from auto-pause
+              sqlcmd -S "$SQL_FQDN" -d "$DB_NAME" --authentication-method ActiveDirectoryDefault -l 120 -b "$@" && return 0
+              echo "Retry $i in 30s…"; sleep 30
+            done
+            return 1
+          }
+          run_sql -i db/001-schema.sql
+          run_sql -i db/002-grant-api-identity.sql
+
+      - name: Close SQL firewall
+        if: always()
+        run: az sql server firewall-rule delete -g "${{ vars.LAB_RG }}" -s "$SQL_SERVER" -n "$RULE" -o none || true
+
+  # ---------------------------------------------------------------- STEP 5
+  api:
+    needs: [apply, db]
+    runs-on: ubuntu-24.04
+    environment: lab
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet publish app/api/Api.csproj -c Release -o publish
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/webapps-deploy@v3 # uses the Entra login above (basic auth is disabled)
+        with:
+          app-name: ${{ needs.apply.outputs.api_name }}
+          package: publish
+
+  # ---------------------------------------------------------------- STEP 6a
+  web:
+    needs: [apply, api]
+    runs-on: ubuntu-24.04
+    environment: lab
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/web/package-lock.json
+      - name: Build React
+        working-directory: app/web
+        env:
+          VITE_API_BASE_URL: https://${{ needs.apply.outputs.api_hostname }}
+        run: |
+          npm ci
+          npm run build
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Fetch SWA deployment token (never stored)
+        id: swa
+        run: |
+          TOKEN=$(az staticwebapp secrets list -n "${{ needs.apply.outputs.web_name }}" -g "${{ vars.LAB_RG }}" --query properties.apiKey -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+      - uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
+          action: upload
+          app_location: app/web/dist
+          skip_app_build: true
+          skip_api_build: true
+
+  # ---------------------------------------------------------------- STEP 6b
+  smoke:
+    needs: [apply, web]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: End-to-end check (API + DB)
+        run: |
+          URL="https://${{ needs.apply.outputs.api_hostname }}/api/hello"
+          for i in $(seq 1 12); do   # up to ~6 min: F1 cold start + DB resume
+            if BODY=$(curl -fsS "$URL"); then echo "$BODY"; exit 0; fi
+            echo "Attempt $i failed, waiting 30s…"; sleep 30
+          done
+          exit 1
+      - name: Front end reachable
+        run: curl -fsS -o /dev/null "https://${{ needs.apply.outputs.web_hostname }}" && echo "Web OK → https://${{ needs.apply.outputs.web_hostname }}"

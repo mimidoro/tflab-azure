@@ -1,0 +1,28 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# NOTE: backend.hcl and bootstrap.auto.tfvars are non-secret and MUST be committed.
+# Commit .terraform.lock.hcl too.
+
+# .NET
+**/bin/
+**/obj/
+publish/
+
+# Node
+**/node_modules/
+**/dist/
+
+# Local env / secrets — never commit
+.env
+.env.*
+*.pfx
+*.pem

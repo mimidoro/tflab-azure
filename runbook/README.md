@@ -9,8 +9,17 @@ They are deliberately not GitHub workflows: each one needs a judgement call firs
 
 ## Where to run
 
-**GitHub Codespaces** (recommended). On the repo page: **Code → Codespaces → Create codespace on main**.
-The dev container already has `az`, `terraform`, `gh` and `jq`.
+**Azure Cloud Shell** (recommended). In the Azure portal click `>_` and choose **Bash**. You're already
+signed in with MFA, so there's no device-code step for security defaults to block.
+`az`, `terraform`, `gh`, `jq` and `git` are preinstalled.
+
+```bash
+git clone https://github.com/mimidoro/tflab-azure && cd tflab-azure
+./runbook/state-unlock.sh
+```
+
+**GitHub Codespaces** works only if device-code sign-in is allowed in your tenant
+(security defaults may block it — see the table below).
 
 ```bash
 az login --use-device-code --tenant 18b498fe-e48e-4047-978b-e3b465f34b76   # no --scope needed
@@ -25,9 +34,10 @@ The script selects the subscription with `az account set` and checks it belongs 
 | Symptom at login | Cause | Fix |
 |---|---|---|
 | "No subscriptions found" | Signed in with an account that has no role on the subscription (often a cached work account picked on the device-code page) | `az logout`; open the device-code link in a **private** browser window; sign in as the account that ran bootstrap |
+| `AADSTS530035: Access has been blocked by security defaults` | Security defaults treat **device-code sign-in from a cloud IP** (Codespaces) as risky | Use **Azure Cloud Shell** (already signed in) or a normal browser `az login` on your laptop. Don't disable security defaults |
 | "You don't have permission to access this resource" | Resource-scoped login (`--scope`) or wrong account | Drop `--scope`; check `az account show` shows the account you ran bootstrap with |
 
-Stop the codespace afterwards (**Code → Codespaces → ⋯ → Stop**) to save free hours.
+If you used a codespace, stop it afterwards (**Code → Codespaces → ⋯ → Stop**) to save free hours.
 
 ## State unlock — what the script checks
 

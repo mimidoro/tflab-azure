@@ -8,7 +8,7 @@
 #   3. Lab resource group (the ONLY scope the pipeline identity can change)
 #   4. Entra ID app + service principal with GitHub OIDC federated credentials
 #      (no client secret is ever created)
-#   5. Least-privilege role assignments
+#   5. Least-privilege role assignments (incl. custom Web operation-status reader)
 #   6. Entra group used as the Azure SQL admin (you + pipeline identity)
 #   7. Subscription budget alert (NZ$ guardrail)
 #   8. Writes infra/backend.hcl + infra/bootstrap.auto.tfvars (commit both)
@@ -120,6 +120,34 @@ retry az role assignment create --assignee-object-id "$SP_OID" --assignee-princi
 retry az role assignment create --assignee-object-id "$SP_OID" --assignee-principal-type ServicePrincipal \
   --role "Storage Blob Data Contributor" \
   --scope "${SA_ID}/blobServices/default/containers/${STATE_CONTAINER}" >/dev/null
+
+# Static Web App create/delete is async: the provider polls an operation-status
+# endpoint at SUBSCRIPTION scope (.../providers/Microsoft.Web/locations/<region>/...),
+# outside the lab RG. A tiny custom Azure RBAC role (free — not an Entra custom role)
+# grants read on those status endpoints only, instead of subscription-wide Reader.
+POLL_ROLE="${PREFIX}-web-operation-reader"
+POLL_ROLE_JSON=$(cat <<JSON
+{
+  "Name": "${POLL_ROLE}",
+  "IsCustom": true,
+  "Description": "Read async operation status for Microsoft.Web (Static Web Apps / App Service) create and delete polling.",
+  "Actions": [
+    "Microsoft.Web/locations/staticSitesOperationStatuses/read",
+    "Microsoft.Web/locations/operationResults/read",
+    "Microsoft.Web/locations/operations/read"
+  ],
+  "NotActions": [],
+  "AssignableScopes": ["/subscriptions/${SUB_ID}"]
+}
+JSON
+)
+if az role definition list --custom-role-only true --name "$POLL_ROLE" --query "[0].id" -o tsv | grep -q .; then
+  az role definition update --role-definition "$POLL_ROLE_JSON" >/dev/null
+else
+  az role definition create --role-definition "$POLL_ROLE_JSON" >/dev/null
+fi
+retry az role assignment create --assignee-object-id "$SP_OID" --assignee-principal-type ServicePrincipal \
+  --role "$POLL_ROLE" --scope "/subscriptions/${SUB_ID}" >/dev/null
 
 # ---- 6. SQL admin group ------------------------------------------------------
 echo "==> SQL admin Entra group"

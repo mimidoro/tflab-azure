@@ -33,6 +33,11 @@ az lock delete -n "lock-tfstate-nodelete" -g "$STATE_RG" \
   --resource-type Microsoft.Storage/storageAccounts 2>/dev/null || true
 az group delete -n "$STATE_RG" --yes --no-wait 2>/dev/null || true
 
+echo "==> Custom role (Web operation-status reader)"
+POLL_ROLE="${PREFIX}-web-operation-reader"
+az role assignment delete --role "$POLL_ROLE" --scope "/subscriptions/${SUB_ID}" 2>/dev/null || true
+az role definition delete --name "$POLL_ROLE" --custom-role-only true 2>/dev/null || true
+
 echo "==> Entra app registration + SQL admin group"
 APP_ID=$(az ad app list --display-name "$APP_NAME" --query "[0].appId" -o tsv)
 [[ -n "$APP_ID" ]] && az ad app delete --id "$APP_ID"

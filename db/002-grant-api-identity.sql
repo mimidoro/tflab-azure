@@ -7,5 +7,10 @@
 SET NOCOUNT ON;
 
 DROP USER IF EXISTS [$(ApiName)];
-CREATE USER [$(ApiName)] FROM EXTERNAL PROVIDER WITH OBJECT_ID = '$(ApiPrincipalId)';
+
+DECLARE @sid varbinary(16) = CAST(CAST('$(ApiClientId)' AS uniqueidentifier) AS varbinary(16));
+DECLARE @sql nvarchar(max) =
+  N'CREATE USER [$(ApiName)] WITH SID = ' + CONVERT(nvarchar(max), @sid, 1) + N', TYPE = E;';
+EXEC (@sql);
+
 ALTER ROLE db_datareader ADD MEMBER [$(ApiName)];

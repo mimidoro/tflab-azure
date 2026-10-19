@@ -13,18 +13,18 @@ They are deliberately not GitHub workflows: each one needs a judgement call firs
 The dev container already has `az`, `terraform`, `gh` and `jq`.
 
 ```bash
-az login --use-device-code      # no --tenant or --scope: the script picks the lab subscription
+az login --use-device-code --tenant 18b498fe-e48e-4047-978b-e3b465f34b76   # no --scope needed
 ./runbook/state-unlock.sh       # auto-detects the lock; pass the ID to double-check
 ```
 
 ## Lab identifiers
 
-`runbook/lab.env` holds the lab **subscription ID** (non-secret). Scripts select it with
-`az account set` and derive the tenant from it, so you never type either.
+`runbook/lab.env` holds the lab **tenant ID** and **subscription ID** (both non-secret).
+The script selects the subscription with `az account set` and checks it belongs to that tenant.
 
 | Symptom at login | Cause | Fix |
 |---|---|---|
-| "No subscriptions found" | Signed in to a tenant that doesn't own the subscription | `az logout`, then `az login --use-device-code` **without** `--tenant` |
+| "No subscriptions found" | Signed in with an account that has no role on the subscription (often a cached work account picked on the device-code page) | `az logout`; open the device-code link in a **private** browser window; sign in as the account that ran bootstrap |
 | "You don't have permission to access this resource" | Resource-scoped login (`--scope`) or wrong account | Drop `--scope`; check `az account show` shows the account you ran bootstrap with |
 
 Stop the codespace afterwards (**Code → Codespaces → ⋯ → Stop**) to save free hours.

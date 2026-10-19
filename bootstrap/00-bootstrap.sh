@@ -63,7 +63,7 @@ retry() { local n=0; until "$@"; do n=$((n+1)); [[ $n -ge 10 ]] && return 1; ech
 
 # ---- 1. Resource providers ---------------------------------------------------
 echo "==> Registering resource providers"
-for ns in Microsoft.Storage Microsoft.Web Microsoft.Sql Microsoft.Consumption; do
+for ns in Microsoft.Storage Microsoft.Web Microsoft.Sql Microsoft.Consumption Microsoft.ManagedIdentity; do
   az provider register --namespace "$ns" --wait >/dev/null
 done
 

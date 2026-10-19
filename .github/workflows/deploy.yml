@@ -67,6 +67,7 @@ jobs:
       api_name: ${{ steps.out.outputs.api_name }}
       api_hostname: ${{ steps.out.outputs.api_hostname }}
       api_principal_id: ${{ steps.out.outputs.api_principal_id }}
+      api_client_id: ${{ steps.out.outputs.api_client_id }}
       web_name: ${{ steps.out.outputs.web_name }}
       web_hostname: ${{ steps.out.outputs.web_hostname }}
       sql_server_name: ${{ steps.out.outputs.sql_server_name }}
@@ -86,7 +87,7 @@ jobs:
       - id: out
         name: Export outputs
         run: |
-          for k in api_name api_hostname api_principal_id web_name web_hostname sql_server_name sql_fqdn db_name; do
+          for k in api_name api_hostname api_principal_id api_client_id web_name web_hostname sql_server_name sql_fqdn db_name; do
             echo "$k=$(terraform output -raw $k)" >> "$GITHUB_OUTPUT"
           done
 
@@ -132,8 +133,10 @@ jobs:
           AZURE_TOKEN_CREDENTIALS: AzureCliCredential # use the az login above
           # sqlcmd reads environment variables as $(Var) scripting variables
           ApiName: ${{ needs.apply.outputs.api_name }}
-          ApiPrincipalId: ${{ needs.apply.outputs.api_principal_id }}
+          ApiClientId: ${{ needs.apply.outputs.api_client_id }}
         run: |
+          # Fail fast: a missing/invalid client ID is a config error, not transient.
+          [[ "$ApiClientId" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "::error::ApiClientId missing or not a GUID: '$ApiClientId'"; exit 1; }
           run_sql() {
             for i in 1 2 3 4 5; do  # free DB may be resuming from auto-pause
               sqlcmd -S "$SQL_FQDN" -d "$DB_NAME" --authentication-method ActiveDirectoryDefault -l 120 -b "$@" && return 0

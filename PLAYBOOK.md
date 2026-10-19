@@ -37,7 +37,7 @@
 ```
  Browser ──HTTPS──► SWA Free (eastasia edge)       static React files only
     │
-    └──HTTPS/CORS──► App Service F1 (australiaeast)  .NET 10 API, system-assigned managed identity
+    └──HTTPS/CORS──► App Service F1 (australiaeast)  .NET 10 API, user-assigned managed identity
                          │  Entra token (no password)
                          ▼
                      Azure SQL free offer (australiaeast)  Entra-only auth, TLS 1.2+

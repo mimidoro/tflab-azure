@@ -13,9 +13,19 @@ They are deliberately not GitHub workflows: each one needs a judgement call firs
 The dev container already has `az`, `terraform`, `gh` and `jq`.
 
 ```bash
-az login --use-device-code      # state uses Entra ID sign-in only (no storage keys)
+az login --use-device-code      # no --tenant or --scope: the script picks the lab subscription
 ./runbook/state-unlock.sh       # auto-detects the lock; pass the ID to double-check
 ```
+
+## Lab identifiers
+
+`runbook/lab.env` holds the lab **subscription ID** (non-secret). Scripts select it with
+`az account set` and derive the tenant from it, so you never type either.
+
+| Symptom at login | Cause | Fix |
+|---|---|---|
+| "No subscriptions found" | Signed in to a tenant that doesn't own the subscription | `az logout`, then `az login --use-device-code` **without** `--tenant` |
+| "You don't have permission to access this resource" | Resource-scoped login (`--scope`) or wrong account | Drop `--scope`; check `az account show` shows the account you ran bootstrap with |
 
 Stop the codespace afterwards (**Code → Codespaces → ⋯ → Stop**) to save free hours.
 
@@ -40,3 +50,4 @@ Stop the codespace afterwards (**Code → Codespaces → ⋯ → Stop**) to save
 - **State lock:** a lease on the state blob that stops two Terraform runs writing at once.
 - **Lease:** Azure Blob Storage's exclusive write lock on a blob.
 - **Entra ID:** Microsoft's identity service (formerly Azure AD).
+- **Tenant:** an Entra ID directory; each subscription belongs to exactly one.

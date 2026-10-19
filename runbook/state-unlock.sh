@@ -13,7 +13,7 @@
 # Deliberately NOT a GitHub workflow: breaking locks needs a human decision.
 #
 # Usage (from the repo root):
-#   az login --use-device-code          # Entra sign-in; state has no storage keys
+#   az login --use-device-code          # no --tenant / --scope needed; script selects the lab subscription
 #   ./runbook/state-unlock.sh           # auto-detects the lock ID
 #   ./runbook/state-unlock.sh <LOCK_ID> # or pass the ID from the error message
 # =============================================================================
@@ -27,8 +27,22 @@ LOCK_ID="${1:-}"
 for t in az terraform gh jq; do
   command -v "$t" >/dev/null || { echo "ERROR: '$t' not found (Codespaces has all of these)."; exit 1; }
 done
-az account show -o none 2>/dev/null || { echo "ERROR: not signed in. Run: az login --use-device-code"; exit 1; }
-export ARM_SUBSCRIPTION_ID="${ARM_SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
+# shellcheck source=lab.env
+source "$REPO_ROOT/runbook/lab.env"
+az account show -o none 2>/dev/null || { echo "ERROR: not signed in. Run: az login --use-device-code   (no --tenant needed)"; exit 1; }
+
+# Select the lab subscription; if it's not visible, the sign-in landed in the wrong tenant.
+if ! az account set --subscription "$LAB_SUBSCRIPTION_ID" 2>/dev/null; then
+  echo "ERROR: subscription $LAB_SUBSCRIPTION_ID is not visible to $(az account show --query user.name -o tsv 2>/dev/null)."
+  echo "Tenants this account can see:"
+  az account tenant list --query "[].{tenant:tenantId, name:displayName}" -o table 2>/dev/null || true
+  echo "Fix: az logout && az login --use-device-code   (then re-run). If it's still missing, you're signed in with the wrong account."
+  exit 1
+fi
+export ARM_SUBSCRIPTION_ID="$LAB_SUBSCRIPTION_ID"
+export ARM_TENANT_ID="$(az account show --query tenantId -o tsv)"
+echo "Subscription : $ARM_SUBSCRIPTION_ID"
+echo "Tenant       : $ARM_TENANT_ID (derived from the subscription)"
 
 # Read backend settings from the committed backend.hcl (single source of truth).
 hcl() { sed -n "s/^$1[[:space:]]*=[[:space:]]*\"\(.*\)\"/\1/p" "$BACKEND"; }
